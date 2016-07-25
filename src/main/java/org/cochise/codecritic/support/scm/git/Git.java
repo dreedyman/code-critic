@@ -42,49 +42,35 @@ public class Git extends AbstractSCM {
         String gitLogCommand = System.getProperty("git");
         File gitFile = new File(System.getProperty("user.dir"), ".git");
         if(gitFile.exists()) {
-            List<Origin> origins = parseConfig(gitFile);
+            Config config = parseConfig(gitFile);
             BufferedReader br = new BufferedReader(new InputStreamReader(System.in));
-            String since = null;
-            boolean getInput = false;
-            StringBuilder requestBuilder = new StringBuilder();
-            if(origins.isEmpty()) {
-                getInput = true;
-                requestBuilder.append("Enter the branch <since> to base the comparison on: ");
-            } else if(origins.size()==1) {
-                since = origins.get(0).getId();
-                setRepository(origins.get(0).getUrl());
+            String since;
+            if(config.origins.size()==1) {
+                setRepository(config.origins.get(0).getUrl());
             } else {
-                getInput = true;
-                requestBuilder.append("\nEnter the branch <since> to base the comparison on:\n");
+                StringBuilder requestBuilder = new StringBuilder();
+                requestBuilder.append("\nEnter the origin (repository) to use:\n");
                 AtomicInteger count = new AtomicInteger(1);
-                for(Origin origin : origins) {
+                for(Origin origin : config.origins) {
                     requestBuilder.append("\n");
                     requestBuilder.append(count.getAndIncrement()).append(": ").append(origin);
                 }
+                int choice = getInput(requestBuilder.toString(), config.origins.size(), br);
+                setRepository(config.origins.get(choice).getUrl());
             }
-            if(getInput) {
-                while(true) {
-                    try {
-                        System.out.println(requestBuilder.toString()+"\n");
-                        System.out.print("Selection: ");
-                        String input = br.readLine();
-                        try {
-                            int choice = Integer.parseInt(input);
-                            if(choice<=origins.size()) {
-                                since = origins.get(choice-1).getId();
-                                setRepository(origins.get(choice-1).getUrl());
-                                break;
-                            } else {
-                                System.out.println("Invalid choice.");
-                            }
-                        } catch(NumberFormatException e) {
-                            System.out.println("Invalid choice.");
-                        }
-                    } catch (IOException e) {
-                        throw new CodeCriticException("Error reading from input, code-critic will now exit.", e);
-                    }
+            if(config.branches.size()==1) {
+                since = config.branches.get(0);
+            } else {
+                StringBuilder requestBuilder = new StringBuilder();
+                requestBuilder.append("\nEnter the branch to base the comparison on:\n");
+                AtomicInteger count = new AtomicInteger(1);
+                for(String b : config.branches) {
+                    requestBuilder.append("\n");
+                    requestBuilder.append(count.getAndIncrement()).append(": ").append(b);
                 }
+                since = config.branches.get(getInput(requestBuilder.toString(), config.branches.size(), br));
             }
+
             if(gitLogCommand==null || gitLogCommand.length()==0) {
                 logCommandBuilder.append("git log ").append(since).append("..");
             } else {
@@ -95,8 +81,9 @@ public class Git extends AbstractSCM {
         }
     }
 
-    private List<Origin> parseConfig(File git) throws CodeCriticException {
-        List<Origin> origins = new ArrayList<Origin>();
+    private Config parseConfig(File git) throws CodeCriticException {
+        List<Origin> origins = new ArrayList<>();
+        List<String> branches = new ArrayList<>();
         File config = new File(git, "config");
         if(config.exists()) {
             try {
@@ -127,12 +114,17 @@ public class Git extends AbstractSCM {
                             origins.add(origin);
                         }
                     }
+                    if(line.startsWith("[branch")) {
+                        String[] parts = line.split(" \"");
+                        String branch = parts[1].substring(0, parts[1].indexOf("\""));
+                        branches.add(branch);
+                    }
                 }
             } catch (IOException e) {
                 throw new CodeCriticException("Unable to read "+config.getPath());
             }
         }
-        return origins;
+        return new Config(origins, branches);
     }
 
     public void runLog() throws CodeCriticException {
@@ -237,7 +229,7 @@ public class Git extends AbstractSCM {
         //throw new CodeCriticException("Git support not implemented yet");
     }
 
-    class Origin {
+    private class Origin {
         String id;
         String url;
 
@@ -276,6 +268,41 @@ public class Git extends AbstractSCM {
             StringBuilder builder = new StringBuilder();
             builder.append(id).append(":").append(url);
             return builder.toString();
+        }
+    }
+
+    private int getInput(String request, int size, BufferedReader br) throws CodeCriticException {
+        int selection;
+        while(true) {
+            try {
+                System.out.println(request+"\n");
+                System.out.print("Selection: ");
+                String input = br.readLine();
+                try {
+                    int choice = Integer.parseInt(input);
+                    if(choice<=size) {
+                        selection = choice-1;
+                        break;
+                    } else {
+                        System.out.println("Invalid choice.");
+                    }
+                } catch(NumberFormatException e) {
+                    System.out.println("Invalid choice.");
+                }
+            } catch (IOException e) {
+                throw new CodeCriticException("Error reading from input, code-critic will now exit.", e);
+            }
+        }
+        return selection;
+    }
+
+    private class Config {
+        List<Origin> origins;
+        List<String> branches;
+
+        public Config(List<Origin> origins, List<String> branches) {
+            this.origins = origins;
+            this.branches = branches;
         }
     }
 }

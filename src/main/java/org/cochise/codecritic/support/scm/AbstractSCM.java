@@ -74,7 +74,10 @@ public abstract class AbstractSCM implements SCM {
     }
 
     protected void setRepository(String repository) {
-        this.repository = repository;
+        if(repository.contains("github.com"))
+            this.repository = repository.trim().substring(0, repository.length()-5)+"/";
+        else
+            this.repository = repository.trim();
     }
 
     public boolean includeTests() {
