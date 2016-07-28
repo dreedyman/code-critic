@@ -15,13 +15,12 @@
  */
 package org.cochise.codecritic.support.scm.git;
 
-import org.cochise.codecritic.ChangeSet;
-import org.cochise.codecritic.CodeCriticException;
-import org.cochise.codecritic.ExecHelper;
-import org.cochise.codecritic.SourceFile;
+import org.cochise.codecritic.*;
 import org.cochise.codecritic.support.scm.AbstractSCM;
+import org.fusesource.jansi.HtmlAnsiOutputStream;
 
 import java.io.*;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Scanner;
@@ -35,14 +34,18 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 public class Git extends AbstractSCM {
     private final StringBuilder logCommandBuilder = new StringBuilder();
+    private Config config;
+    private WhileWeWaitPrintSomePeriods waiter;
+    private Thread waiterThread;
+
 
     @Override
     public void initialize(File workingDirectory, String... options) throws CodeCriticException {
         super.initialize(workingDirectory, options);
         String gitLogCommand = System.getProperty("git");
-        File gitFile = new File(System.getProperty("user.dir"), ".git");
+        File gitFile = new File(workingDirectory, ".git");
         if(gitFile.exists()) {
-            Config config = parseConfig(gitFile);
+            config = parseConfig(gitFile);
             BufferedReader br = new BufferedReader(new InputStreamReader(System.in));
             String since;
             if(config.origins.size()==1) {
@@ -73,6 +76,7 @@ public class Git extends AbstractSCM {
 
             if(gitLogCommand==null || gitLogCommand.length()==0) {
                 logCommandBuilder.append("git log ").append(since).append("..");
+                config.fromBranch = since;
             } else {
                 logCommandBuilder.append(gitLogCommand);
             }
@@ -86,9 +90,7 @@ public class Git extends AbstractSCM {
         List<String> branches = new ArrayList<>();
         File config = new File(git, "config");
         if(config.exists()) {
-            try {
-                Scanner scanner = new Scanner(new FileReader(config));
-
+            try(Scanner scanner = new Scanner(new FileReader(config))) {
                 while (scanner.hasNextLine()) {
                     String line = scanner.nextLine();
                     if(line.startsWith("[remote")) {
@@ -124,27 +126,21 @@ public class Git extends AbstractSCM {
                 throw new CodeCriticException("Unable to read "+config.getPath());
             }
         }
-        return new Config(origins, branches);
+        String currentBranch;
+        try {
+            currentBranch = currentBranch(git);
+        } catch (IOException e) {
+            throw new CodeCriticException("Unable to obtain current branch", e);
+        }
+        branches.remove(currentBranch);
+        setBranch(currentBranch);
+        return new Config(origins, branches, currentBranch);
     }
 
     public void runLog() throws CodeCriticException {
         String branch = getBranch();
-        if(branch==null && System.getProperty("git")==null) {
-            //git log master..rio-5.0 --name-only
-            String branchOutput = ExecHelper.doExec("git branch", null, getWorkingDirectory()).trim();
-            StringTokenizer st = new StringTokenizer(branchOutput, "\n");
-            while(st.hasMoreTokens()) {
-                String s = st.nextToken();
-                if(s.startsWith("*")) {
-                    s = s.substring(1);
-                    branch = s.trim();
-                    break;
-                }
-            }
-            logCommandBuilder.append(branch);
-            logCommandBuilder.append(" --name-only");
-        }
-        setBranch(branch);
+        logCommandBuilder.append(branch);
+        logCommandBuilder.append(" --name-only");
         sendInfoMessage("Using branch " + branch);
         sendInfoMessage("Using repository " + getRepository());
         sendInfoMessage("Using log command \""+logCommandBuilder.toString()+"\"");
@@ -167,6 +163,13 @@ public class Git extends AbstractSCM {
                 }
                 String changeSetString = line.substring("commit".length()).trim();
                 changeSet = new ChangeSet(number.incrementAndGet(), getRepository()+"commit/", changeSetString);
+                /*if(changeSet.getChangeSet().equals("b8920d31bcb40b86e33d6cfb3c2ea70e58663f65")) {
+                    System.out.println("stop");
+                }*/
+            }
+            if(line.startsWith("Merge:")) {
+                changeSet.setMerge();
+                processSourceFile(null, changeSet, null);
             }
             if(line.startsWith("Author:")) {
                 line = line.substring("Author:".length()).trim();
@@ -188,10 +191,7 @@ public class Git extends AbstractSCM {
                 File f = new File(getWorkingDirectory(), file);
                 if(!f.exists())
                     continue;
-                if(!includeTests() && file.contains("src"+ File.separator+"test")) {
-                    continue;
-                }
-                SourceFile sourceFile = new SourceFile(file);
+                SourceFile sourceFile = new SourceFile(new File(getWorkingDirectory(), file).getAbsolutePath());
                 if(file.endsWith(".java")) {
                     processSourceFile(sourceFile, changeSet, getJavaSources());
                 } else {
@@ -218,6 +218,11 @@ public class Git extends AbstractSCM {
                 processDescription = true;
             }
         }
+        if(waiterThread!=null) {
+            waiter.stop();
+            waiterThread.interrupt();
+            System.out.println();
+        }
         if(getJavaSources().isEmpty()) {
             sendInfoMessage("There are no files to analyze.");
             return;
@@ -226,7 +231,54 @@ public class Git extends AbstractSCM {
         sendInfoMessage("Total number of Java files: "+getJavaSources().size());
         sendDebugMessage(debugReport("Java sources changed ", getJavaSources()));
         sendDebugMessage(debugReport("Other files changed ", getOtherSources()));
-        //throw new CodeCriticException("Git support not implemented yet");
+    }
+
+    @Override
+    protected void processSourceFile(SourceFile sourceFile, ChangeSet changeSet, List<SourceFile> sourceFileList) {
+        if(!getRepository().startsWith("http")) {
+            if(waiter==null) {
+                sendInfoMessage("Generate diff files for non-http repository");
+                waiter = new WhileWeWaitPrintSomePeriods();
+                waiterThread = new Thread(waiter);
+                waiterThread.start();
+            }
+            String diff;
+            if(sourceFile==null) {
+                diff = String.format("git diff --color %s %s", config.fromBranch, changeSet.getChangeSet());
+            } else {
+                diff = String.format("git diff --color %s %s -- %s",
+                               config.fromBranch, changeSet.getChangeSet(), sourceFile.getFile());
+            }
+            String result = ExecHelper.doExec(diff, null, getWorkingDirectory());
+            if (result.length() == 0) {
+                result = "<span style=\"color: gray;\">no changes detected</span>";
+            }
+            String[] lines = result.split("\n");
+            StringBuilder html = new StringBuilder();
+            html.append("<html>\n").append("<body>\n").append("<p style=\"font-family: monospace\">");
+            try {
+                for (String line : lines) {
+                    String s = colorize(line.replace(" ", "nbsp;"));
+                    s = s.replace("<span style=\"color: red;\">", "<span style=\"color: red; background-color: #ffcccc;\">");
+                    s = s.replace("<span style=\"color: green;\">", "<span style=\"color: green; background-color: #c6ebd9;\">");
+                    html.append(s.replace("nbsp;", "&nbsp;")).append("<br>\n");
+                }
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+            html.append("</p>\n").append("</body>\n").append("</html>");
+            changeSet.setDiff(html.toString());
+        }
+        if(sourceFile!=null)
+            super.processSourceFile(sourceFile, changeSet, sourceFileList);
+    }
+
+    private String colorize(String text) throws IOException {
+        ByteArrayOutputStream os = new ByteArrayOutputStream();
+        HtmlAnsiOutputStream hos = new HtmlAnsiOutputStream(os);
+        hos.write(text.getBytes("UTF-8"));
+        hos.close();
+        return new String(os.toByteArray(), "UTF-8");
     }
 
     private class Origin {
@@ -296,13 +348,24 @@ public class Git extends AbstractSCM {
         return selection;
     }
 
+    private String currentBranch(File dir) throws IOException {
+        File head = new File(dir, "HEAD");
+        List<String> lines = Files.readAllLines(head.toPath());
+        String ref = lines.get(0);
+        int ndx = ref.lastIndexOf("/");
+        return ref.substring(ndx+1).trim();
+    }
+
     private class Config {
         List<Origin> origins;
         List<String> branches;
+        String currentBranch;
+        String fromBranch;
 
-        public Config(List<Origin> origins, List<String> branches) {
+        Config(List<Origin> origins, List<String> branches, String currentBranch) {
             this.origins = origins;
             this.branches = branches;
+            this.currentBranch = currentBranch;
         }
     }
 }

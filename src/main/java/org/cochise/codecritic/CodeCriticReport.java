@@ -33,6 +33,7 @@ import javax.xml.transform.dom.DOMSource;
 import javax.xml.transform.stream.StreamResult;
 import javax.xml.transform.stream.StreamSource;
 import java.io.*;
+import java.nio.file.Files;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -61,24 +62,29 @@ public class CodeCriticReport extends XMLRenderer {
     private static String totalFiles = "?";
     private static String totalJavaFiles = "?";
     private static String minimumPriority = "5";
+    private static File outputDirectory;
 
-    public static void setRulesUsed(String rulesUsed) {
+    static void setOutputDirectory(File outputDirectory) {
+        CodeCriticReport.outputDirectory = outputDirectory;
+    }
+
+    static void setRulesUsed(String rulesUsed) {
         CodeCriticReport.rulesUsed = rulesUsed;
     }
 
-    public static void setRepository(String repository) {
+    static void setRepository(String repository) {
         CodeCriticReport.repository = repository;
     }
 
-    public static void setTotalFiles(String totalFiles) {
+    static void setTotalFiles(String totalFiles) {
         CodeCriticReport.totalFiles = totalFiles;
     }
 
-    public static void setTotalJavaFiles(String totalJavaFiles) {
+    static void setTotalJavaFiles(String totalJavaFiles) {
         CodeCriticReport.totalJavaFiles = totalJavaFiles;
     }
 
-    public static void setMinimumPriority(String minimumPriority) {
+    static void setMinimumPriority(String minimumPriority) {
         CodeCriticReport.minimumPriority = minimumPriority;
     }
 
@@ -86,17 +92,17 @@ public class CodeCriticReport extends XMLRenderer {
         branch = b;
     }
 
-    public static void setChangeSetList(List<ChangeSet> changeSet) {
+    static void setChangeSetList(List<ChangeSet> changeSet) {
         if(changeSet!=null)
             changeSets.addAll(changeSet);
     }
     
-    public static void setJavaSources(List<SourceFile> sourceFiles) {
+    static void setJavaSources(List<SourceFile> sourceFiles) {
         if(sourceFiles!=null)
             javaSources.addAll(sourceFiles);
     }
 
-    public static void setOtherSources(List<SourceFile> sourceFiles) {
+    static void setOtherSources(List<SourceFile> sourceFiles) {
         if(sourceFiles!=null)
             otherSources.addAll(sourceFiles);
     }
@@ -116,6 +122,14 @@ public class CodeCriticReport extends XMLRenderer {
                     Writer writer = getWriter();
                     StringBuffer buf = new StringBuffer();
                     for(ChangeSet changeSet : changeSets) {
+                        if(changeSet.getDiff()!=null) {
+                            File diffDir = new File(outputDirectory, "diffs");
+                            if(!diffDir.exists())
+                                diffDir.mkdirs();
+                            File diff = new File(diffDir, changeSet.getChangeSet()+".html");
+                            Files.write(diff.toPath(), changeSet.getDiff().getBytes());
+                            changeSet.setLink(diff.toURI().toURL().toString());
+                        }
                         buf.append("<changeset number=\"").append(changeSet.getNumber());
                         buf.append("\" link=\"").append(changeSet.getLink());
                         buf.append("\" changeset=\"").append(changeSet.getChangeSet());
@@ -264,11 +278,7 @@ public class CodeCriticReport extends XMLRenderer {
         try {
             DocumentBuilder parser = DocumentBuilderFactory.newInstance().newDocumentBuilder();
             return parser.parse(xml);
-        } catch (ParserConfigurationException e) {
-            e.printStackTrace();
-        } catch (SAXException e) {
-            e.printStackTrace();
-        } catch (IOException e) {
+        } catch (ParserConfigurationException | SAXException | IOException e) {
             e.printStackTrace();
         }
         return null;

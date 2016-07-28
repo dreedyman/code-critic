@@ -53,10 +53,11 @@ public class CLI {
     }
     
     private void exec() throws CodeCriticException {
-        File workingDirectory = new File(System.getProperty("user.dir"));
+        File workingDirectory = commandLine.getProjectDir();
         scm.initialize(workingDirectory, commandLine.getLogOptions());
         scm.runLog();
-        File outputDirectory = new File(workingDirectory, "target"+File.separator+"code-critic-report");
+        String reportDir = new File(workingDirectory, "pom.xml").exists()?"target":"build/reports";
+        File outputDirectory = new File(workingDirectory, reportDir+File.separator+"code-critic-report");
         ReportGenerator reportGenerator = new ReportGenerator(scm, listener);
         reportGenerator.generate(outputDirectory, commandLine.getReportOptions());
     }
@@ -77,6 +78,7 @@ public class CLI {
         private boolean includeTests;
         private String exclude;
         private boolean help;
+        private String projectDir;
         
         CommandLineParser(String... args) {
             for(String arg : args) {
@@ -98,12 +100,12 @@ public class CLI {
                 if(arg.startsWith("-branch")) {
                     branch = splitArg(arg);
                 }
-                if(arg.startsWith("-branch")) {
-                    branch = splitArg(arg);
-                }
                 if(arg.startsWith("-exclude")) {
                     exclude = splitArg(arg);
-                }                
+                }
+                if(arg.startsWith("-dir")) {
+                    projectDir = splitArg(arg);
+                }
             }
         }
 
@@ -139,11 +141,17 @@ public class CLI {
             return options.toArray(new String[options.size()]);
         }
 
+        File getProjectDir() {
+            String dir = projectDir==null?System.getProperty("user.dir"):projectDir;
+            return new File(dir);
+        }
+
         private String splitArg(String arg) {
             String[] parts = arg.split("=");
             return parts[1];
         }
-        public boolean debug() {
+
+        boolean debug() {
             return debug;
         }
     }
@@ -151,7 +159,7 @@ public class CLI {
     private class ConsoleListener implements ProgressListener {
         private boolean debug = false;
 
-        public void setDebug(boolean debug) {
+        void setDebug(boolean debug) {
             this.debug = debug;
         }
 

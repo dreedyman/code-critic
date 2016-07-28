@@ -82,6 +82,7 @@ public class ReportGenerator {
         Collections.sort(changeSets);
         Collections.sort(javaSources);
         Collections.sort(otherSources);
+        CodeCriticReport.setOutputDirectory(outputDirectory);
         CodeCriticReport.setChangeSetList(changeSets);
         CodeCriticReport.setJavaSources(javaSources);
         CodeCriticReport.setOtherSources(otherSources);
@@ -145,20 +146,5 @@ public class ReportGenerator {
             stringBuilder.append(s);
         }
         return  stringBuilder.toString();
-    }
-
-    private class WhileWeWaitPrintSomePeriods implements Runnable {
-        boolean keepRunning = true;
-        public void run() {
-            while(keepRunning) {
-                System.out.print(".");
-                try {
-                    Thread.sleep(1000);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
-            }
-            System.out.println();
-        }
     }
 }

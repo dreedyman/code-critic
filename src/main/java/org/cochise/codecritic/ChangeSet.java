@@ -22,17 +22,19 @@ package org.cochise.codecritic;
  */
 public class ChangeSet implements Comparable<ChangeSet> {
     private final int number;
-    private final String link;
+    private String link;
     private final String changeSet;
     private String message;
     private String developer;
     private String email;
     private String date;
+    private String diff;
+    private boolean merge;
 
     public ChangeSet(final int number, final String link, final String changeSet) {
         this.number = number;
-        this.link = link;
         this.changeSet = changeSet;
+        this.link = link+changeSet;
     }
 
     public void setMessage(final String message) {
@@ -44,7 +46,19 @@ public class ChangeSet implements Comparable<ChangeSet> {
     }
 
     public String getLink() {
-        return link+changeSet;
+        return link;
+    }
+
+    public void setMerge() {
+        merge = true;
+    }
+
+    boolean isMerge() {
+        return merge;
+    }
+
+    void setLink(String link) {
+        this.link = link;
     }
 
     public String getChangeSet() {
@@ -81,6 +95,14 @@ public class ChangeSet implements Comparable<ChangeSet> {
 
     public int compareTo(final ChangeSet c) {
         return number==c.number?0:(number>c.number?1:-1);
+    }
+
+    public String getDiff() {
+        return diff;
+    }
+
+    public void setDiff(String diff) {
+        this.diff = diff;
     }
 
     @Override
